@@ -2592,30 +2592,44 @@ static int jk_encode_add_atom_to_buffer(JKEncodeState *encodeState, void *object
   //     
   // XXX XXX XXX XXX
 
+  Class _isa = object->isa;
   BOOL workAroundMacOSXABIBreakingBug = NO;
   if(JK_EXPECT_F(((NSUInteger)object) & 0x1)) { workAroundMacOSXABIBreakingBug = YES; goto slowClassLookup; }
 
-       if(JK_EXPECT_T(object->isa == encodeState->fastClassLookup.stringClass))     { isClass = JKClassString;     }
-  else if(JK_EXPECT_T(object->isa == encodeState->fastClassLookup.numberClass))     { isClass = JKClassNumber;     }
-  else if(JK_EXPECT_T(object->isa == encodeState->fastClassLookup.dictionaryClass)) { isClass = JKClassDictionary; }
-  else if(JK_EXPECT_T(object->isa == encodeState->fastClassLookup.arrayClass))      { isClass = JKClassArray;      }
-  else if(JK_EXPECT_T(object->isa == encodeState->fastClassLookup.nullClass))       { isClass = JKClassNull;       }
+#define FAST_LOOKUP(lookupField, jkClass) if (JK_EXPECT_T(_isa == encodeState->fastClassLookup.lookupField)) { isClass = jkClass; }
+#define SLOW_LOOKUP(klass, lookupField, jkClass) if (JK_EXPECT_T([object isKindOfClass:[klass class]])) { \
+  if(workAroundMacOSXABIBreakingBug == NO) { encodeState->fastClassLookup.lookupField = _isa; } isClass = jkClass; }
+
+    FAST_LOOKUP(stringClass,     JKClassString) else
+    FAST_LOOKUP(numberClass,     JKClassNumber) else
+    FAST_LOOKUP(dictionaryClass, JKClassDictionary) else
+    FAST_LOOKUP(arrayClass,      JKClassArray) else
+    FAST_LOOKUP(nullClass,       JKClassNull)
   else {
   slowClassLookup:
-         if(JK_EXPECT_T([object isKindOfClass:[NSString     class]])) { if(workAroundMacOSXABIBreakingBug == NO) { encodeState->fastClassLookup.stringClass     = object->isa; } isClass = JKClassString;     }
-    else if(JK_EXPECT_T([object isKindOfClass:[NSNumber     class]])) { if(workAroundMacOSXABIBreakingBug == NO) { encodeState->fastClassLookup.numberClass     = object->isa; } isClass = JKClassNumber;     }
-    else if(JK_EXPECT_T([object isKindOfClass:[NSDictionary class]])) { if(workAroundMacOSXABIBreakingBug == NO) { encodeState->fastClassLookup.dictionaryClass = object->isa; } isClass = JKClassDictionary; }
-    else if(JK_EXPECT_T([object isKindOfClass:[NSArray      class]])) { if(workAroundMacOSXABIBreakingBug == NO) { encodeState->fastClassLookup.arrayClass      = object->isa; } isClass = JKClassArray;      }
-    else if(JK_EXPECT_T([object isKindOfClass:[NSNull       class]])) { if(workAroundMacOSXABIBreakingBug == NO) { encodeState->fastClassLookup.nullClass       = object->isa; } isClass = JKClassNull;       }
+    SLOW_LOOKUP(NSString,     stringClass,     JKClassString) else
+    SLOW_LOOKUP(NSNumber,     numberClass,     JKClassNumber) else
+    SLOW_LOOKUP(NSDictionary, dictionaryClass, JKClassDictionary) else
+    SLOW_LOOKUP(NSArray,      arrayClass,      JKClassArray) else
+    SLOW_LOOKUP(NSNull,       nullClass,       JKClassNull)
     else {
-      if((rerunningAfterClassFormatter == NO) && (
+      if ((rerunningAfterClassFormatter == NO) && (
 #ifdef __BLOCKS__
-           ((encodeState->classFormatterBlock) && ((object = encodeState->classFormatterBlock(object))                                                                         != NULL)) ||
+           ((encodeState->classFormatterBlock) && ((object = encodeState->classFormatterBlock(object)) != NULL)) ||
 #endif
-           ((encodeState->classFormatterIMP)   && ((object = encodeState->classFormatterIMP(encodeState->classFormatterDelegate, encodeState->classFormatterSelector, object)) != NULL))    )) { rerunningAfterClassFormatter = YES; goto rerunAfterClassFormatter; }
+           ((encodeState->classFormatterIMP)   && ((object = encodeState->classFormatterIMP(encodeState->classFormatterDelegate, encodeState->classFormatterSelector, object)) != NULL))
+      )) {
+          rerunningAfterClassFormatter = YES;
+          goto rerunAfterClassFormatter;
+      }
       
-      if(rerunningAfterClassFormatter == NO) { jk_encode_error(encodeState, @"Unable to serialize object class %@.", NSStringFromClass([encodeCacheObject class])); return(1); }
-      else { jk_encode_error(encodeState, @"Unable to serialize object class %@ that was returned by the unsupported class formatter.  Original object class was %@.", (object == NULL) ? @"NULL" : NSStringFromClass([object class]), NSStringFromClass([encodeCacheObject class])); return(1); }
+      if (rerunningAfterClassFormatter == NO) {
+          jk_encode_error(encodeState, @"Unable to serialize object class %@.", NSStringFromClass([encodeCacheObject class]));
+          return(1);
+      } else {
+          jk_encode_error(encodeState, @"Unable to serialize object class %@ that was returned by the unsupported class formatter.  Original object class was %@.", (object == NULL) ? @"NULL" : NSStringFromClass([object class]), NSStringFromClass([encodeCacheObject class]));
+          return(1);
+      }
     }
   }
 
@@ -2788,7 +2802,7 @@ static int jk_encode_add_atom_to_buffer(JKEncodeState *encodeState, void *object
           for(id keyObject in enumerateObject) {
             if(JK_EXPECT_T(printComma)) { if(JK_EXPECT_F(jk_encode_write1(encodeState, 0L, ","))) { return(1); } }
             printComma = 1;
-            if(JK_EXPECT_F((keyObject->isa      != encodeState->fastClassLookup.stringClass)) && JK_EXPECT_F(([keyObject   isKindOfClass:[NSString class]] == NO))) { jk_encode_error(encodeState, @"Key must be a string object."); return(1); }
+            if(JK_EXPECT_F((keyObject->isa != encodeState->fastClassLookup.stringClass)) && JK_EXPECT_F(([keyObject isKindOfClass:[NSString class]] == NO))) { jk_encode_error(encodeState, @"Key must be a string object."); return(1); }
             if(JK_EXPECT_F(jk_encode_add_atom_to_buffer(encodeState, keyObject)))                                                        { return(1); }
             if(JK_EXPECT_F(jk_encode_write1(encodeState, 0L, ":")))                                                                      { return(1); }
             if(JK_EXPECT_F(jk_encode_add_atom_to_buffer(encodeState, (void *)CFDictionaryGetValue((CFDictionaryRef)object, keyObject)))) { return(1); }
